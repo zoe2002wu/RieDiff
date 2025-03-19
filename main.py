@@ -151,6 +151,7 @@ if __name__ == '__main__':
     # CLD params
     p.add('--m_inv', type=float)
     p.add('--gamma', type=float)
+    p.add('--Gamma', type=float)
     p.add('--numerical_eps', type=float)
 
     # Optimization
@@ -254,6 +255,10 @@ if __name__ == '__main__':
     p.add('--eval_sample_samples', type=int, default=1)
 
     p.add('--eval_seed', type=int, default=0)
+
+    #TODO Add argument for riemann
+    p.add('--geometry', choices=['Euclidean', 'Riemann'], default='Riemann')
+    p.add('--riemann_mix', type=float, default = 0.5)
 
     config = p.parse_args()
     run_main(config)

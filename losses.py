@@ -38,8 +38,8 @@ def get_loss_fn(sde, train, config):
 
         # In the augmented case, we only need "velocity noise" for the loss
         if sde.is_augmented:
-            _, batch_randn_v = torch.chunk(batch_randn, 2, dim=1)
-            batch_randn = batch_randn_v
+            batch_randn_x, batch_randn_r = torch.chunk(batch_randn, 2, dim=1)
+            batch_randn = batch_randn_r
 
         score_fn = mutils.get_score_fn(config, sde, model, train)
         score = score_fn(perturbed_data, t)
@@ -55,7 +55,13 @@ def get_loss_fn(sde, train, config):
             # Following loss corresponds to Maximum Likelihood learning
             loss = (score - batch_randn * noise_multiplier)**2 * multiplier
         elif config.weighting == 'reweightedv2':
-            loss = (score / noise_multiplier - batch_randn)**2
+            if config.geometry == "Euclidean":
+                loss = (score / noise_multiplier - batch_randn)**2
+            elif config.geometry == "Riemann":
+                epsilon_x, score_r = torch.chunk(score, 2, dim=1)
+                loss_r = (score_r / noise_multiplier - batch_randn_r)**2
+                loss_x = (epsilon_x - batch_randn_x)**2
+                loss = torch.cat((loss_x, loss_r), dim=1)
         else:
             raise NotImplementedError(
                 'The loss weighting %s is not implemented.' % config.weighting)

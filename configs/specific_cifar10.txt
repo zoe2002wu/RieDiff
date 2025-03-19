@@ -30,6 +30,7 @@ beta0               = 4.0
 beta1               = 0.0
 m_inv               = 4.0
 gamma               = 0.04
+Gamma               = 1
 
 # Optimization
 optimizer           = Adam

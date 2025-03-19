@@ -60,15 +60,26 @@ def get_score_fn(config, sde, model, train=False):
         noise_multiplier = sde.noise_multiplier(t).type(torch.float32)
 
         if config.mixed_score:
-            if sde.is_augmented:
-                _, z = torch.chunk(u, 2, dim=1)
-                ones = torch.ones_like(z, device=config.device)
-                var_zz = (sde.var(t, 0. * ones, (sde.gamma / sde.m_inv) * ones)[2]).type(torch.float32)
-                return - z / var_zz + score * noise_multiplier
+            if config.geometry == "Riemann":
+                out_x, out_r = torch.chunk(score, 2, dim=1)
+                x, r = torch.chunk(u, 2, dim=1)
+                ones = torch.ones_like(r, device=config.device)
+                var_rr = (sde.var(t, 0. * ones, (sde.gamma / sde.m_inv) * ones)[2]).type(torch.float32)
+
+                B_t = config.beta0 * t + 0.5 * config.beta1 * t**2
+                B_t = B_t.view(-1, 1, 1, 1)  # Shape: [128, 1, 1, 1]
+                scaling = (-2/config.Gamma - 1/ B_t)
+
+                score_r = - r / var_rr + out_r * noise_multiplier
+                epsilon_x = x + scaling * var_rr * out_x / noise_multiplier
+
+                score = torch.cat((epsilon_x, score_r), dim=1)
+                return score
             else:
-                ones = torch.ones_like(u, device=config.device)
-                var = (sde.var(t, ones)[0]).type(torch.float32)
-                return -u / var + score * noise_multiplier
+                _, r = torch.chunk(u, 2, dim=1)
+                ones = torch.ones_like(r, device=config.device)
+                var_rr = (sde.var(t, 0. * ones, (sde.gamma / sde.m_inv) * ones)[2]).type(torch.float32)
+                return - r / var_rr + score * noise_multiplier
         else:
             return noise_multiplier * score
     return score_fn

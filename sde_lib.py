@@ -22,15 +22,15 @@ class CLD(nn.Module):
         self.g = 1. / self.f
         self.gamma = config.gamma
         self.numerical_eps = config.numerical_eps
+        self.riemann_mix = config.riemann_mix
+        self.image_size = config.image_size
+        self.image_channels = config.image_channels
+        self.beta = config.beta0
+        self.Gamma = config.Gamma
 
-        if config.mode=="eval":
-            G_0_path = '/content/CLD-SGM/work_dir/cifar10_seed_0/G_0.npy'
-            G_T_path = '/content/CLD-SGM/work_dir/cifar10_seed_0/G_T.npy'
+        # Load normalization once but allow updating
+        self.normalization = 1
 
-            self.G_0 = torch.tensor(np.load(G_0_path), dtype=torch.float32).to(self.config.device)
-            self.G_T = torch.tensor(np.load(G_T_path), dtype=torch.float32).to(self.config.device)
-
-            print(f"Loaded G_0 and G_T successfully")
 
 
     @property
@@ -45,66 +45,44 @@ class CLD(nn.Module):
         '''
         Evaluating drift and diffusion of the SDE.
         '''
-        x, v = torch.chunk(u, 2, dim=1)
+        x, r = torch.chunk(u, 2, dim=1)
 
         beta = add_dimensions(self.beta_fn(t), self.config.is_image)
 
-        drift_x = self.m_inv * beta * v
-        drift_v = -beta * x - self.f * self.m_inv * beta * v
+        drift_x = self.m_inv * beta * r
+        drift_r = -beta * x - self.f * self.m_inv * beta * r
 
         diffusion_x = torch.zeros_like(x)
-        diffusion_v = torch.sqrt(2. * self.f * beta) * torch.ones_like(v)
+        diffusion_r = torch.sqrt(2. * self.f * beta) * torch.ones_like(r)
 
-        return torch.cat((drift_x, drift_v), dim=1), torch.cat((diffusion_x, diffusion_v), dim=1)
+        return torch.cat((drift_x, drift_r), dim=1), torch.cat((diffusion_x, diffusion_r), dim=1)
     
-    def sde_reverse(self, u, t, score):
+        
+    def sde_reverse(self, u, t, score_x):
         '''
         Evaluating drift and diffusion of the SDE.
         '''
+        x, r = torch.chunk(u, 2, dim=1)
 
+        G, G_inv, G_sqrt = self.compute_G(score_x, u, t)
+
+        beta_coeff = 9 #self.beta * torch.sqrt(torch.tensor(self.m_inv))
+        Gamma_coeff = self.Gamma * torch.sqrt(torch.tensor(self.m_inv))
+
+        beta = beta_coeff * G_sqrt
+
+        hamilton_x_riemann = x # - trace_term + quadratic_term
+        hamilton_r_riemann = self.matrix_mult(G_inv, r)
         
-        s_ = score.permute(0,2,3,1)
+        beta_gamma = torch.sqrt(torch.tensor(2 * beta_coeff * Gamma_coeff)) * G_sqrt
 
-        outer = s_.unsqueeze(-1) @ s_.unsqueeze(-2)
-        outer = outer.mean(dim=(1,2))
-
-        G = torch.diagonal(outer, dim1 = 1, dim2=2)
-
-        x, v = torch.chunk(u, 2, dim=1)
-
-        t = t[0].item()
-
-        # Define correct directory
-
-
-        
-        
-        Normalization = (self.G_0+self.G_T)/2*self.m_inv
-
-        G_adjusted = G/Normalization
-
-        #print(f"G adjust {G_adjusted.mean().item()} var {G_adjusted.var().item()}")
-
-
-        G_inv = 1/G_adjusted
-
-        Gamma = 2* torch.sqrt(G_adjusted)
-        beta = 4 * Gamma
-
-        G_inv=G_inv.view(G.shape[0], 3,1,1)
-
-        Gamma=Gamma.view(G.shape[0], 3,1,1)
-        beta=beta.view(G.shape[0], 3,1,1)
-
-
-
-        drift_x = G_inv * beta * v #x portion of f(u, t)
-        drift_v = -beta * x - Gamma * G_inv * beta * v  #r portion of f(u, t)
+        drift_x = self.matrix_mult(beta, hamilton_r_riemann) #x portion of f(u, t)
+        drift_r = -self.matrix_mult(beta, hamilton_x_riemann) - self.matrix_mult(beta_coeff* Gamma_coeff*G,  hamilton_r_riemann) #r portion of f(u, t)
 
         diffusion_x = torch.zeros_like(x) #x portion of g(t)
-        diffusion_v = torch.sqrt(torch.tensor(2. * Gamma * beta)) * torch.ones_like(v)  #r portion of g(t)
+        diffusion_r = self.matrix_mult(beta_gamma, torch.ones_like(r))  #r portion of g(t)
 
-        return torch.cat((drift_x, drift_v), dim=1), torch.cat((diffusion_x, diffusion_v), dim=1)
+        return torch.cat((drift_x, drift_r), dim=1), torch.cat((diffusion_x, diffusion_r), dim=1)
     
     def get_reverse_sde(self, score_fn=None, probability_flow=False):
         sde_fn = self.sde_reverse
@@ -114,23 +92,60 @@ class CLD(nn.Module):
             Evaluating drift and diffusion of the ReverseSDE.
             '''
             score = score if score is not None else score_fn(u, 1. - t)
+            score_x , score_r = torch.chunk(score, 2, dim=1)
 
-            drift, diffusion = sde_fn(u, 1. - t, score)
+            drift, diffusion = sde_fn(u, 1. - t, score_x)
 
-            drift_x, drift_v = torch.chunk(drift, 2, dim=1)
-            _, diffusion_v = torch.chunk(diffusion, 2, dim=1)
+            drift_x, drift_r = torch.chunk(drift, 2, dim=1)
+            _, diffusion_r = torch.chunk(diffusion, 2, dim=1)
 
             reverse_drift_x = -drift_x
-            reverse_drift_v = -drift_v + diffusion_v ** 2. * \
-                score * (0.5 if probability_flow else 1.)
+            reverse_drift_r = -drift_r + diffusion_r ** 2. * \
+                score_r * (0.5 if probability_flow else 1.)
 
-            reverse_diffusion_x = torch.zeros_like(diffusion_v)
-            reverse_diffusion_v = torch.zeros_like(
-                diffusion_v) if probability_flow else diffusion_v
+            reverse_diffusion_x = torch.zeros_like(diffusion_r)
+            reverse_diffusion_r = torch.zeros_like(
+                diffusion_r) if probability_flow else diffusion_r
 
-            return torch.cat((reverse_drift_x, reverse_drift_v), dim=1), torch.cat((reverse_diffusion_x, reverse_diffusion_v), dim=1)
+            return torch.cat((reverse_drift_x, reverse_drift_r), dim=1), torch.cat((reverse_diffusion_x, reverse_diffusion_r), dim=1)
 
         return reverse_sde
+
+
+    def compute_G(self,score_x, t):
+
+        s_ = score_x.permute(0, 2, 3, 1)  # Shape: (batch_size, 32, 32, 3)
+        outer = s_.unsqueeze(-1) @ s_.unsqueeze(-2)  # Shape: (batch_size, 32, 32, 3, 3)
+        G = outer.mean(dim=0)  # Averaging over batch (reduces gradient strength)
+        
+        if t[0].item() == 1.0:
+            G_diagonal = torch.diagonal(G, dim1=-2, dim2=-1)
+            self.normalization = (G_diagonal.mean().item()/(self.args.M ))
+
+        G = G/self.normalization
+
+        t = t[0].item()
+        k = 4.5 # tunes how quickly it goes to G_id
+        start = 1 / self.config.m_inv 
+        G_id  = start * torch.eye(self.image_channels, device=G.device).reshape(1,1,3,3).expand(self.image_size,self.image_size,self.image_channels,self.image_channels)
+        alpha = self.riemann_mix * torch.exp(torch.tensor(-k * (1-t), device = G.device))  
+
+        G = alpha * G + (1 - alpha) * G_id
+
+        G_inv = torch.linalg.inv(G).to(torch.float32)
+
+        G_sqrt = torch.linalg.cholesky(G)
+        G_sqrt = G_sqrt.to(torch.float32)
+        return G, G_inv, G_sqrt
+    
+
+    def matrix_mult(self,A, B):
+        # A is 32 x 32 x 3 x 3
+        # B is batch-size x 3 x 32 x 32
+        A = A.to(torch.float32)
+        B = B.to(torch.float32)
+        output = (A @ B.permute(0,2,3,1).unsqueeze(-1)).squeeze(-1).permute(0,3,1,2)            
+        return output # shape batch-size x 3 x 32 x 32
 
     def prior_sampling(self, shape):
         return torch.randn(*shape, device=self.config.device), torch.randn(*shape, device=self.config.device) / np.sqrt(self.m_inv)

@@ -44,6 +44,12 @@ class NCSNpp(nn.Module):
         self.v_input = True if config.sde == 'cld' else False
 
         self.n_channels = config.n_channels
+        # TODO OUT CHANNELS, want it to be on config file option for riemann
+        if config.geometry == "Riemann":
+            self.out_channels = 6
+        else:
+            self.out_channels = 3
+        
         ch_mult = string_to_tuple(config.ch_mult)
         self.n_resblocks = config.n_resblocks
         self.attn_resolutions = string_to_tuple(config.attn_resolutions)
@@ -200,7 +206,7 @@ class NCSNpp(nn.Module):
                         modules.append(nn.GroupNorm(num_groups=min(
                             in_ch // 4, 32), num_channels=in_ch, eps=1e-6))
                         modules.append(
-                            conv3x3(in_ch, config.image_channels, init_scale=init_scale))
+                            conv3x3(in_ch, self.out_channels, init_scale=init_scale))
                         pyramid_ch = config.image_channels
                     elif self.progressive == 'residual':
                         modules.append(nn.GroupNorm(num_groups=min(
@@ -212,7 +218,7 @@ class NCSNpp(nn.Module):
                         modules.append(nn.GroupNorm(num_groups=min(
                             in_ch // 4, 32), num_channels=in_ch, eps=1e-6))
                         modules.append(
-                            conv3x3(in_ch, config.image_channels, bias=True, init_scale=init_scale))
+                            conv3x3(in_ch, self.out_channels, bias=True, init_scale=init_scale))
                         pyramid_ch = channels
                     elif self.progressive == 'residual':
                         modules.append(pyramid_upsample(
@@ -231,7 +237,7 @@ class NCSNpp(nn.Module):
             modules.append(nn.GroupNorm(num_groups=min(
                 in_ch // 4, 32), num_channels=in_ch, eps=1e-6))
             modules.append(
-                conv3x3(in_ch, config.image_channels, init_scale=init_scale))
+                conv3x3(in_ch, self.out_channels, init_scale=init_scale))
 
         self.all_modules = nn.ModuleList(modules)
 

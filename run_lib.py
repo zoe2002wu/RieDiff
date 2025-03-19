@@ -37,6 +37,8 @@ def train(config, workdir):
     print(f"We are running training")
     sys.stdout.flush()
 
+
+
     local_rank = config.local_rank
     global_rank = config.global_rank
     global_size = config.global_size
@@ -190,6 +192,7 @@ def train(config, workdir):
                 logging.info('Saving snapshot checkpoint.')
                 save_checkpoint(os.path.join(
                     checkpoint_dir, 'checkpoint.pth'), state)
+                x = scaler(train_x)
 
                 ema.store(score_model.parameters())
                 ema.copy_to(score_model.parameters())
@@ -228,6 +231,7 @@ def train(config, workdir):
                     if global_rank == 0:
                         logging.info('sampling -- round: %d' % r)
                     dist.barrier()
+
 
                     x, _, nfe = sampling_fn(score_model)
                     x = inverse_scaler(x)
@@ -296,8 +300,8 @@ def train(config, workdir):
             start_time = time.time()
 
             x = scaler(train_x)
-            x = x.to(config.device)
             x_0 = x.clone()  # Make a copy of x_0
+            x = x.to(config.device)
 
             loss = train_step_fn(state, x)
 
@@ -307,7 +311,6 @@ def train(config, workdir):
                     logging.info('Iter %d/%d Loss: %.4f Time: %.3f' % (step + 1,
                                  config.n_train_iters, loss.item(), time.time() - start_time))
                     writer.add_scalar('training_loss', loss, step)
-                print(f"Step {step} loss {loss.item()}")
 
                 dist.barrier()
 
@@ -319,41 +322,7 @@ def train(config, workdir):
         save_checkpoint(os.path.join(
             checkpoint_dir, 'final_checkpoint.pth'), state)
 
-    # Define t = 0 and t = 1 as tensors
-    t_0 = 1e-5* torch.ones((config.sampling_batch_size,), device=config.device)  # Shape: (batch_size,)
-    t_1 = torch.ones((config.sampling_batch_size,), device=config.device)   # Shape: (batch_size,)
 
-
-    v_0 = torch.zeros_like(x_0, device=x_0.device)
-
-    u_0 = torch.cat((x_0, v_0), dim=1)
-
-    x_t = torch.randn((int(config.sampling_batch_size), 3, x_0.shape[-2], x_0.shape[-1]), device=x_0.device)  
-    r_t = torch.randn((int(config.sampling_batch_size), 3, x_0.shape[-2], x_0.shape[-1]), device=x_0.device) / np.sqrt(config.m_inv)
-    u_t = torch.cat((x_t, r_t), dim=1)
-
-    # Compute score function for t=0 and t=1
-    with torch.no_grad():
-        u_t = u_t.float()  # Convert to float32 before passing into model
-        score_T = score_model(u_t, t_1)  # Compute score at t=1
-        score_0 = score_model(u_0, t_0)  # Compute score at t=0
-
-    # Compute G_0 and G_T using the method provided
-    def compute_G(score):
-        s_ = score.permute(0,2,3,1)  # (B, H, W, C)
-        outer = s_.unsqueeze(-1) @ s_.unsqueeze(-2)  # Outer product: (B, H, W, C, C)
-        outer = outer.mean(dim=(1,2))  # Mean over H, W -> (B, C, C)
-        G = torch.diagonal(outer, dim1=1, dim2=2)  # Extract diagonal -> (B, C)
-        return G
-
-    G_0 = compute_G(score_0)
-    G_T = compute_G(score_T)
-
-    # Log or save G_0 and G_T
-    if global_rank == 0:
-        np.save(os.path.join(workdir, 'G_0.npy'), G_0.cpu().numpy())
-        np.save(os.path.join(workdir, 'G_T.npy'), G_T.cpu().numpy())
-        print(f"Saved G")
 
     dist.barrier()
 
