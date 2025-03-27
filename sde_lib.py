@@ -135,7 +135,7 @@ class CLD(nn.Module):
 
     def compute_score_x(self, t, epsilon_x, score_r):
 
-        noise_multiplier = self.noise_multiplier(self.config, t)
+        noise_multiplier = self.noise_multiplier(t)
         M_inv = self.m_inv
         gamma = self.gamma
 
