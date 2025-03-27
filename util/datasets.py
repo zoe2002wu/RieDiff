@@ -150,12 +150,12 @@ def get_loaders_eval(dataset, root, distributed, training_batch_size, testing_ba
     train_queue = torch.utils.data.DataLoader(
         train_data, batch_size=training_batch_size,
         shuffle=(train_sampler is None) and shuffle_train,
-        sampler=train_sampler, pin_memory=True, num_workers=8, drop_last=drop_last_train)  # 8
+        sampler=train_sampler, pin_memory=True, num_workers=0, drop_last=drop_last_train)  # 8
 
     valid_queue = torch.utils.data.DataLoader(
         valid_data, batch_size=testing_batch_size,
         shuffle=(valid_sampler is None),
-        sampler=valid_sampler, pin_memory=True, num_workers=1, drop_last=False)  # 1
+        sampler=valid_sampler, pin_memory=True, num_workers=0, drop_last=False)  # 1
 
     return train_queue, valid_queue, num_classes
 

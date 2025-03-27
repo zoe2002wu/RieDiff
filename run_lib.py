@@ -4,7 +4,7 @@
 # This work is licensed under the NVIDIA Source Code License for
 # CLD-SGM. To view a copy of this license, see the LICENSE file.
 # ---------------------------------------------------------------
-
+print("Importing run_lib.py", flush = True)
 import os
 import sys
 import glob
@@ -15,11 +15,14 @@ from torch.utils import tensorboard
 import numpy as np
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
+import matplotlib.pyplot as plt
 
 from util.utils import calculate_frechet_distance
 from models.ema import ExponentialMovingAverage
 from models import utils as mutils
+print("Importing model ncsnpp", flush = True)
 from models import ncsnpp
+print("Done importing model ncsnpp", flush = True)
 from util.utils import make_dir, get_optimizer, optimization_manager, get_data_scaler, get_data_inverse_scaler, set_seeds, save_img
 from util.utils import compute_eval_loss, compute_image_likelihood, broadcast_params, reduce_tensor, build_beta_fn, build_beta_int_fn
 from util import datasets
@@ -29,6 +32,7 @@ import sde_lib
 import sampling
 import likelihood
 import evaluation
+import plots
 
 
 def train(config, workdir):
@@ -44,6 +48,7 @@ def train(config, workdir):
     global_size = config.global_size
 
     if config.mode == 'train':
+        print("set seeds", flush = True)
         set_seeds(global_rank, config.seed)
     elif config.mode == 'continue':
         set_seeds(global_rank, config.seed + config.cont_nbr)
@@ -52,6 +57,8 @@ def train(config, workdir):
 
     torch.cuda.device(local_rank)
     config.device = torch.device('cuda:%d' % local_rank)
+
+    print("cuda device", flush = True)
 
     # Setting up all necessary folders
     sample_dir = os.path.join(workdir, 'samples')
@@ -77,6 +84,7 @@ def train(config, workdir):
     if config.sde == 'vpsde':
         sde = sde_lib.VPSDE(config, beta_fn, beta_int_fn)
     elif config.sde == 'cld':
+        print("CLD", flush = True)
         sde = sde_lib.CLD(config, beta_fn, beta_int_fn)
     else:
         raise NotImplementedError('SDE %s is unknown.' % config.sde)
@@ -160,6 +168,7 @@ def train(config, workdir):
             if step % config.eval_freq == 0 and step >= config.eval_threshold:
                 ema.store(score_model.parameters())
                 ema.copy_to(score_model.parameters())
+
                 eval_loss = compute_eval_loss(
                     config, state, eval_step_fn, valid_queue, scaler)
                 ema.restore(score_model.parameters())
@@ -173,6 +182,7 @@ def train(config, workdir):
             if step % config.likelihood_freq == 0 and step >= config.likelihood_threshold:
                 ema.store(score_model.parameters())
                 ema.copy_to(score_model.parameters())
+
                 mean_nll = compute_image_likelihood(
                     config, sde, state, likelihood_fn, scaler, inverse_scaler, valid_queue, step=step, likelihood_dir=likelihood_dir)
                 ema.restore(score_model.parameters())
@@ -193,9 +203,10 @@ def train(config, workdir):
                 save_checkpoint(os.path.join(
                     checkpoint_dir, 'checkpoint.pth'), state)
                 x = scaler(train_x)
-
+                
                 ema.store(score_model.parameters())
                 ema.copy_to(score_model.parameters())
+
                 x, v, nfe = sampling_fn(score_model)
                 ema.restore(score_model.parameters())
 
@@ -338,6 +349,7 @@ def evaluate(config, workdir):
 
     torch.cuda.device(local_rank)
     config.device = torch.device('cuda:%d' % local_rank)
+    print(f"We are using device: {config.device}")  # Add this before the eval loop
 
     eval_dir = os.path.join(workdir, config.eval_folder)
     checkpoint_dir = os.path.join(workdir, 'checkpoints')
@@ -398,27 +410,52 @@ def evaluate(config, workdir):
         logging.info('Evaluating at training step %d' % step)
     dist.barrier()
 
-    if config.eval_loss:
+    eval_loss = True
+    eval_likelihood = True
+    eval_fid = True
+    eval_sample = True
+    eval_plots = True
+
+    if eval_plots:
+        logging.info('sampling images and plots')
+        dist.barrier()
+
+        x, _, nfe, mu, var, steps = sampling_fn(score_model, eval_plots = True)
+        steps.append(x[0])
+        x = inverse_scaler(x)
+        samples = x.clamp(0.0, 1.0)
+
+        for i, step in enumerate(steps): 
+            steps[i] = inverse_scaler(step).clamp(0.0, 1.0)
+
+        plots.plot_mu_var(mu, var, os.path.join(samples_dir, 'probability_landscape.png'))
+        plots.plot_steps(steps, os.path.join(samples_dir, 'intermediary_images.png'))
+
+        save_img(samples, os.path.join(
+                    samples_dir, 'sample.png'))
+
+    if eval_loss:
         eval_loss = compute_eval_loss(
             config, state, eval_step_fn, valid_queue, scaler, test=True)
         if global_rank == 0:
             logging.info('Testing loss: %.5f' % eval_loss.item())
         dist.barrier()
 
-    if config.eval_likelihood:
+    if eval_likelihood:
         mean_bpd = compute_image_likelihood(
             config, sde, state, likelihood_fn, scaler, inverse_scaler, valid_queue, test=True)
         if global_rank == 0:
             logging.info('Mean NLL: %.5f' % mean_bpd.item())
         dist.barrier()
 
-    if config.eval_fid:
+    if eval_fid:
         num_sampling_rounds = config.eval_fid_samples // (
             config.sampling_batch_size * global_size) + 1
-
+        
         for r in range(num_sampling_rounds):
             if global_rank == 0:
                 logging.info('sampling -- round: %d' % r)
+
             dist.barrier()
 
             x, _, nfe = sampling_fn(score_model)
@@ -473,7 +510,7 @@ def evaluate(config, workdir):
 
         dist.barrier()
 
-    if config.eval_sample:
+    if eval_sample:
         num_sampling_rounds = config.eval_sample_samples // (
             config.sampling_batch_size * global_size) + 1
 

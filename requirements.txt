@@ -3,7 +3,7 @@ torch
 torchvision
 
 # JAX with CUDA 12 support
-jax[cuda12] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+jax[cuda12]
 
 # Updated TensorFlow version (compatible with CUDA 12)
 tensorflow
@@ -12,11 +12,9 @@ tensorflow
 tensorflow-gan
 tensorflow_io
 tensorflow_datasets
-tensorflow-addons
 tensorboard
 
 # Other required packages
-ninja
 h5py
 configargparse
 lmdb
@@ -24,3 +22,8 @@ torchdiffeq
 tfrecord
 matplotlib
 scikit-learn
+
+ninja
+jaxlib
+matplotlib_inline
+IPython

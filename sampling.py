@@ -9,6 +9,7 @@ import torch
 import gc
 from torchdiffeq import odeint
 from models.utils import get_score_fn
+import run_lib
 
 
 def get_sampling_fn(config, sde, sampling_shape, eps):
@@ -45,7 +46,7 @@ def get_ode_sampler(config, sde, sampling_shape, eps):
         rsde = sde.get_reverse_sde(score_fn, probability_flow=True)
         return rsde(u, t)[0]
 
-    def ode_sampler(model, u=None):
+    def ode_sampler(model, eval_plots = None, u=None):
         with torch.no_grad():
             if u is None:
                 x, v = sde.prior_sampling(sampling_shape)
@@ -55,12 +56,48 @@ def get_ode_sampler(config, sde, sampling_shape, eps):
                     u = x
 
             def ode_func(t, u):
+                x, r = torch.chunk(u, 2, dim=1)
+                if eval_plots == True:
+                    global mu
+                    global var
+                    global steps
+                    global first_bool
+                    global second_bool
+                    global third_bool
+                    
+                    mu.append(x[0].mean().item())
+                    var.append(x[0].var().item())
+
+                    if t == 0:
+                        steps.append(x[0])
+                    if t >= 0.25 and first_bool == True:
+                        steps.append(x[0])
+                        first_bool = False
+                    if t >= 0.5 and second_bool == True:
+                        steps.append(x[0])
+                        second_bool = False
+                    if t >= 0.75 and third_bool == True:
+                        steps.append(x[0])
+                        third_bool = False
                 global nfe_counter
                 nfe_counter += 1
                 vec_t = torch.ones(
                     sampling_shape[0], device=u.device, dtype=torch.float64) * t
                 dudt = probability_flow_ode(model, u, vec_t)
                 return dudt
+
+            global mu
+            global var
+            global steps
+            global first_bool, second_bool, third_bool
+
+            mu = []
+            var = []
+            steps = []
+
+            first_bool = True
+            second_bool = True
+            third_bool = True
 
             global nfe_counter
             nfe_counter = 0
@@ -82,9 +119,13 @@ def get_ode_sampler(config, sde, sampling_shape, eps):
 
             if sde.is_augmented:
                 x, v = torch.chunk(u, 2, dim=1)
-                return x, v, nfe_counter
+                if eval_plots == True:
+                    return x, v, nfe_counter, mu, var, steps
+                else:
+                    return x, v, nfe_counter
             else:
                 return u, None, nfe_counter
+
 
     return ode_sampler
 

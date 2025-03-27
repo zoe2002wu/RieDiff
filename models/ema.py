@@ -82,6 +82,7 @@ class ExponentialMovingAverage:
             if param.requires_grad:
                 param.data.copy_(s_param.data)
 
+
     def store(self, parameters):
         """
         Save the current parameters for restoring later.

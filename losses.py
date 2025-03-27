@@ -6,7 +6,7 @@
 # ---------------------------------------------------------------
 
 import torch
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 import numpy as np
 from util.utils import add_dimensions
 from models import utils as mutils
@@ -86,7 +86,7 @@ def get_step_fn(train, optimize_fn, sde, config):
         if train:
             optimizer = state['optimizer']
             optimizer.zero_grad()
-            with autocast(enabled=config.autocast_train):
+            with autocast(device_type='cuda', enabled=config.autocast_train):
                 loss = torch.mean(loss_fn(model, batch))
 
             if optimization:
@@ -101,7 +101,7 @@ def get_step_fn(train, optimize_fn, sde, config):
                 state['ema'].update(model.parameters())
         else:
             with torch.no_grad():
-                with autocast(enabled=config.autocast_eval):
+                with autocast(device_type='cuda', enabled=config.autocast_eval):
                     loss = torch.mean(loss_fn(model, batch))
         return loss
     return step_fn

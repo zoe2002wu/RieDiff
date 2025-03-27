@@ -66,12 +66,22 @@ def get_score_fn(config, sde, model, train=False):
                 ones = torch.ones_like(r, device=config.device)
                 var_rr = (sde.var(t, 0. * ones, (sde.gamma / sde.m_inv) * ones)[2]).type(torch.float32)
 
-                B_t = config.beta0 * t + 0.5 * config.beta1 * t**2
-                B_t = B_t.view(-1, 1, 1, 1)  # Shape: [128, 1, 1, 1]
-                scaling = (-2/config.Gamma - 1/ B_t)
-
                 score_r = - r / var_rr + out_r * noise_multiplier
-                epsilon_x = x + scaling * var_rr * out_x / noise_multiplier
+                if torch.isnan(out_r).any():
+                    print("out r contains Nans")
+                if torch.isnan(out_x).any():
+                    print("out_x contains NaNs")
+                    print("Input ranges:", 
+                        f"u min/max: {u.min()}/{u.max()}", 
+                        f"t min/max: {t.min()}/{t.max()}")
+                    for name, param in model.named_parameters():
+                        if param.grad is not None:
+                            print(f"{name} grad stats: "
+                                f"mean={param.grad.mean().item()}, "
+                                f"std={param.grad.std().item()}, "
+                                f"min={param.grad.min().item()}, "
+                                f"max={param.grad.max().item()}")
+                epsilon_x = x+out_x*noise_multiplier
 
                 score = torch.cat((epsilon_x, score_r), dim=1)
                 return score
@@ -83,6 +93,7 @@ def get_score_fn(config, sde, model, train=False):
         else:
             return noise_multiplier * score
     return score_fn
+
 
 def get_x0_prediction(config, sde, model, train=False):
     def x0_prediction(u, t):

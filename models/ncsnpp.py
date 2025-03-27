@@ -20,7 +20,7 @@ import torch.nn as nn
 import numpy as np
 import functools
 from util.strings import string_to_list, string_to_tuple
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 
 from . import utils, layers, layerspp, normalization
 ResnetBlockDDPM = layerspp.ResnetBlockDDPMpp
@@ -36,6 +36,8 @@ default_initializer = layers.default_init
 @utils.register_model(name='ncsnpp')
 class NCSNpp(nn.Module):
     def __init__(self, config):
+        print("Initializing NCSN++")
+
         super().__init__()
 
         self.config = config
@@ -247,7 +249,7 @@ class NCSNpp(nn.Module):
 
         x = input
 
-        with autocast(False):
+        with autocast(device_type='cuda', enabled=False):
             if self.embedding_type == 'fourier':
                 temb = modules[m_idx](torch.log(t))
                 m_idx += 1

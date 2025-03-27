@@ -27,6 +27,7 @@ class CLD(nn.Module):
         self.image_channels = config.image_channels
         self.beta = config.beta0
         self.Gamma = config.Gamma
+        self.geometry = config.geometry
 
         # Load normalization once but allow updating
         self.normalization = 1
@@ -58,31 +59,45 @@ class CLD(nn.Module):
         return torch.cat((drift_x, drift_r), dim=1), torch.cat((diffusion_x, diffusion_r), dim=1)
     
         
-    def sde_reverse(self, u, t, score_x):
+    def sde_reverse(self, u, t, score_x= None):
         '''
         Evaluating drift and diffusion of the SDE.
         '''
-        x, r = torch.chunk(u, 2, dim=1)
+        if self.geometry == "Riemann":
+            x, r = torch.chunk(u, 2, dim=1)
 
-        G, G_inv, G_sqrt = self.compute_G(score_x, u, t)
+            G, G_inv, G_sqrt = self.compute_G(score_x, t)
 
-        beta_coeff = 9 #self.beta * torch.sqrt(torch.tensor(self.m_inv))
-        Gamma_coeff = self.Gamma * torch.sqrt(torch.tensor(self.m_inv))
+            beta_coeff = self.beta * torch.sqrt(torch.tensor(self.m_inv))
+            Gamma_coeff = self.Gamma * torch.sqrt(torch.tensor(self.m_inv))
 
-        beta = beta_coeff * G_sqrt
+            beta = beta_coeff * G_sqrt
 
-        hamilton_x_riemann = x # - trace_term + quadratic_term
-        hamilton_r_riemann = self.matrix_mult(G_inv, r)
-        
-        beta_gamma = torch.sqrt(torch.tensor(2 * beta_coeff * Gamma_coeff)) * G_sqrt
+            hamilton_x_riemann = x 
+            hamilton_r_riemann = self.matrix_mult(G_inv, r)
+            
+            beta_gamma = torch.sqrt((2 * beta_coeff * Gamma_coeff).clone().detach()) * G_sqrt
 
-        drift_x = self.matrix_mult(beta, hamilton_r_riemann) #x portion of f(u, t)
-        drift_r = -self.matrix_mult(beta, hamilton_x_riemann) - self.matrix_mult(beta_coeff* Gamma_coeff*G,  hamilton_r_riemann) #r portion of f(u, t)
+            drift_x = self.matrix_mult(beta, hamilton_r_riemann) #x portion of f(u, t)
+            drift_r = -self.matrix_mult(beta, hamilton_x_riemann) - self.matrix_mult(beta_coeff* Gamma_coeff*G,  hamilton_r_riemann) #r portion of f(u, t)
 
-        diffusion_x = torch.zeros_like(x) #x portion of g(t)
-        diffusion_r = self.matrix_mult(beta_gamma, torch.ones_like(r))  #r portion of g(t)
+            diffusion_x = torch.zeros_like(x) #x portion of g(t)
+            diffusion_r = self.matrix_mult(beta_gamma, torch.ones_like(r))  #r portion of g(t)
 
-        return torch.cat((drift_x, drift_r), dim=1), torch.cat((diffusion_x, diffusion_r), dim=1)
+            return torch.cat((drift_x, drift_r), dim=1), torch.cat((diffusion_x, diffusion_r), dim=1)
+        else:
+            x, r = torch.chunk(u, 2, dim=1)
+
+            beta = add_dimensions(self.beta_fn(t), self.config.is_image)
+
+            drift_x = self.m_inv * beta * r
+            drift_r = -beta * x - self.f * self.m_inv * beta * r
+
+            diffusion_x = torch.zeros_like(x)
+            diffusion_r = torch.sqrt(2. * self.f * beta) * torch.ones_like(r)
+
+            return torch.cat((drift_x, drift_r), dim=1), torch.cat((diffusion_x, diffusion_r), dim=1)
+
     
     def get_reverse_sde(self, score_fn=None, probability_flow=False):
         sde_fn = self.sde_reverse
@@ -92,9 +107,16 @@ class CLD(nn.Module):
             Evaluating drift and diffusion of the ReverseSDE.
             '''
             score = score if score is not None else score_fn(u, 1. - t)
-            score_x , score_r = torch.chunk(score, 2, dim=1)
 
-            drift, diffusion = sde_fn(u, 1. - t, score_x)
+            if self.geometry == "Riemann":
+                epsilon_x , score_r = torch.chunk(score, 2, dim=1)
+                score_x = self.compute_score_x(t, epsilon_x, score_r)
+
+                drift, diffusion = sde_fn(u, 1. - t, score_x)
+
+            else: 
+                drift, diffusion = sde_fn(u, 1. - t)
+                score_r = score
 
             drift_x, drift_r = torch.chunk(drift, 2, dim=1)
             _, diffusion_r = torch.chunk(diffusion, 2, dim=1)
@@ -111,6 +133,21 @@ class CLD(nn.Module):
 
         return reverse_sde
 
+    def compute_score_x(self, t, epsilon_x, score_r):
+
+        noise_multiplier = self.noise_multiplier(self.config, t)
+        M_inv = self.m_inv
+        gamma = self.gamma
+
+        # Compute covariance components
+        ones = torch.ones_like(epsilon_x, device=epsilon_x.device)  # dimension 3
+        sigma_xx, sigma_xr, _ = self.var(t, 0. * ones, (gamma / M_inv) * ones)
+
+        epsilon_r = score_r/ noise_multiplier
+
+        score_x = (-epsilon_x / torch.sqrt(sigma_xx)) - noise_multiplier*sigma_xr*epsilon_r / sigma_xx
+
+        return score_x
 
     def compute_G(self,score_x, t):
 
@@ -120,7 +157,7 @@ class CLD(nn.Module):
         
         if t[0].item() == 1.0:
             G_diagonal = torch.diagonal(G, dim1=-2, dim2=-1)
-            self.normalization = (G_diagonal.mean().item()/(self.args.M ))
+            self.normalization = G_diagonal.mean().item()*self.m_inv 
 
         G = G/self.normalization
 
@@ -249,6 +286,7 @@ class CLD(nn.Module):
         noise = torch.cat((noise_x, noise_v), dim=1)
 
         perturbed_data = mean + noise
+        
         return perturbed_data, mean, noise, batch_randn
 
     def get_discrete_step_fn(self, mode, score_fn=None, probability_flow=False):

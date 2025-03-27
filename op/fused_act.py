@@ -17,11 +17,11 @@ from torch.utils.cpp_extension import load
 
 module_path = os.path.dirname(__file__)
 fused = load(
-    "fused",
+    name="fused",
     sources=[
         os.path.join(module_path, "fused_bias_act.cpp"),
         os.path.join(module_path, "fused_bias_act_kernel.cu"),
-    ],
+    ]
 )
 
 

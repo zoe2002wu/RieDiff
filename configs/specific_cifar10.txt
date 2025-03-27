@@ -21,7 +21,7 @@ embedding_type      = fourier
 mixed_score         = true
 n_resblocks         = 8
 ema_rate            = 0.9999
-numerical_eps       = 1e-9
+numerical_eps       = 1e-3
 
 # SDE
 sde                 = cld
