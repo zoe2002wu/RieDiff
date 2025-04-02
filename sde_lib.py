@@ -28,6 +28,7 @@ class CLD(nn.Module):
         self.geometry = config.geometry
         self.numerical_eps = config.numerical_eps
         self.M = 1/ config.m_inv
+        self.prev_eig = 2
         
 
 
@@ -65,26 +66,31 @@ class CLD(nn.Module):
         if self.geometry == "Riemann":
             x, r = torch.chunk(u, 2, dim=1)
 
-            print(f"at t {t[0].item():4f} x has mean {x.mean().item()} var {x.var().item()}")
 
-            G, G_inv, G_sqrt = self.compute_G(t, epsilon_x, score_r)
+            G, G_inv, G_sqrt, scaled_by = self.compute_G(t, epsilon_x, score_r)
+            eigvals, _ = torch.linalg.eigh(G)
+ 
 
-            #beta_coeff = self.beta * torch.sqrt(torch.tensor(self.m_inv))
-            #Gamma_coeff = self.Gamma * torch.sqrt(torch.tensor(self.m_inv))
-            eye = torch.eye(self.image_channels, device=G.device).expand(32, 32, 3, 3) 
+            print(f"at t {t[0].item():4f} x var {x.var().item():4f} eig min {eigvals.min().item():4f} max {eigvals.max().item():4f} clamped by {scaled_by:4f}")
+
+            eye = torch.eye(3, device=x.device).expand(32, 32, 3, 3)  # ensure on correct device
             Gamma = 2 * G_sqrt
-            beta_coeff = self.beta
+            if self.geometry == "Euclidean":
+                beta_coeff = torch.tensor(8 * G_sqrt, device = x.device)
+            else:
+                #beta_coeff = torch.tensor(8 * G_sqrt, device = x.device)
+                beta_coeff = torch.tensor(2* eye, device = x.device) #############################################################
 
             hamilton_x_riemann = x 
-            hamilton_r_riemann = self.matrix_mult(G_inv, r)
+            hamilton_r_riemann = self.mm(G_inv, r)
             
-            beta_gamma = torch.sqrt((2 * beta_coeff * Gamma).clone().detach())
+            beta_gamma = torch.sqrt((2 * beta_coeff @ Gamma).clone().detach())
 
-            drift_x = self.matrix_mult(beta_coeff * eye, hamilton_r_riemann) #x portion of f(u, t)
-            drift_r = -self.matrix_mult(beta_coeff * eye, hamilton_x_riemann) - self.matrix_mult(beta_coeff * Gamma,  hamilton_r_riemann) #r portion of f(u, t)
+            drift_x = self.mm(beta_coeff , hamilton_r_riemann) #x portion of f(u, t)
+            drift_r = -self.mm(beta_coeff , hamilton_x_riemann) - self.mm(beta_coeff @ Gamma,  hamilton_r_riemann) #r portion of f(u, t)
 
             diffusion_x = torch.zeros_like(x) #x portion of g(t)
-            diffusion_r = self.matrix_mult(beta_gamma, torch.ones_like(r))  #r portion of g(t)
+            diffusion_r = self.mm(beta_gamma, torch.ones_like(r))  #r portion of g(t)
 
             return torch.cat((drift_x, drift_r), dim=1), torch.cat((diffusion_x, diffusion_r), dim=1)
         else:
@@ -160,27 +166,30 @@ class CLD(nn.Module):
         G = score_conditional.unsqueeze(-1)@ score_conditional.unsqueeze(-2)
         G = torch.mean(G, dim=0)         # shape: (d, d)
 
-        # Eigendecomposition
         eigvals, eigvecs = torch.linalg.eigh(G)
-
-        # Clamp eigenvalues to avoid instability
-        min_eigval = 1e-6
-        max_eigval = 0.5
-        eigvals_clamped = eigvals.clamp(min=min_eigval, max=max_eigval)
-
-        # Reconstruct the clamped matrix
-        G = eigvecs @ torch.diag_embed(eigvals_clamped) @ eigvecs.transpose(-1, -2)
+        max_eigval = eigvals.max().item()
+        if max_eigval>self.prev_eig:
+            eigvals = eigvals.clamp(max= self.prev_eig)
+            G = eigvecs @ torch.diag_embed(eigvals) @ eigvecs.transpose(-1, -2)
+        
+        scaled_by =  max_eigval- eigvals.max().item() 
+        
+        self.prev_eig = eigvals.max().item()
+        
+        #Testing
+        #G = self.M*torch.eye(self.image_channels, device=G.device).expand(32, 32, 3, 3)  # (32, 32, 3, 3)
 
         G_inv = torch.linalg.inv(G).to(torch.float32)
         
         avg_eig = G.diagonal(offset=0, dim1=-2, dim2=-1).sum(-1) / G.shape[-1]  # shape: (32, 32)
         eye = torch.eye(self.image_channels, device=G.device).expand(32, 32, 3, 3)  # (32, 32, 3, 3)
         G_sqrt = torch.sqrt(avg_eig)[..., None, None] * eye      # (32, 32, 3, 3)
+
         G_sqrt = G_sqrt.to(torch.float32)
-        return G, G_inv, G_sqrt # all of shape batch size x 32 x 32 x 3 x 3
+        return G, G_inv, G_sqrt, scaled_by # all of shape batch size x 32 x 32 x 3 x 3
     
 
-    def matrix_mult(self,A, B):
+    def mm(self,A, B):
         # A is batch_size 32 x 32 x 3 x 3
         # B is batch-size x 3 x 32 x 32
         A = A.to(torch.float32)

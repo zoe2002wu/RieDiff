@@ -217,7 +217,7 @@ if __name__ == '__main__':
     p.add('--sampling_method', choices=['ode', 'em', 'sscs'], default='ode')
     p.add('--sampling_solver', default='rk4')
     p.add('--sampling_solver_options',
-          type=json.loads, default={'step_size': 0.001})
+          type=json.loads, default={'step_size': 0.005})
     p.add('--sampling_rtol', type=float, default=1e-4)
     p.add('--sampling_atol', type=float, default=1e-4)
     p.add('--sscs_num_stab', type=float, default=0.)
