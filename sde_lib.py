@@ -65,22 +65,23 @@ class CLD(nn.Module):
         if self.geometry == "Riemann":
             x, r = torch.chunk(u, 2, dim=1)
 
-            print(f"at t {t[0].item()} x has mean {x.mean().item()} var {x.var().item()}")
+            print(f"at t {t[0].item():4f} x has mean {x.mean().item()} var {x.var().item()}")
 
             G, G_inv, G_sqrt = self.compute_G(t, epsilon_x, score_r)
 
-            beta_coeff = self.beta * torch.sqrt(torch.tensor(self.m_inv))
-            Gamma_coeff = self.Gamma * torch.sqrt(torch.tensor(self.m_inv))
-
-            beta = beta_coeff * G_sqrt
+            #beta_coeff = self.beta * torch.sqrt(torch.tensor(self.m_inv))
+            #Gamma_coeff = self.Gamma * torch.sqrt(torch.tensor(self.m_inv))
+            eye = torch.eye(self.image_channels, device=G.device).expand(32, 32, 3, 3) 
+            Gamma = 2 * G_sqrt
+            beta_coeff = self.beta
 
             hamilton_x_riemann = x 
             hamilton_r_riemann = self.matrix_mult(G_inv, r)
             
-            beta_gamma = torch.sqrt((2 * beta_coeff * Gamma_coeff).clone().detach()) * G_sqrt
+            beta_gamma = torch.sqrt((2 * beta_coeff * Gamma).clone().detach())
 
-            drift_x = self.matrix_mult(beta, hamilton_r_riemann) #x portion of f(u, t)
-            drift_r = -self.matrix_mult(beta, hamilton_x_riemann) - self.matrix_mult(beta_coeff* Gamma_coeff*G,  hamilton_r_riemann) #r portion of f(u, t)
+            drift_x = self.matrix_mult(beta_coeff * eye, hamilton_r_riemann) #x portion of f(u, t)
+            drift_r = -self.matrix_mult(beta_coeff * eye, hamilton_x_riemann) - self.matrix_mult(beta_coeff * Gamma,  hamilton_r_riemann) #r portion of f(u, t)
 
             diffusion_x = torch.zeros_like(x) #x portion of g(t)
             diffusion_r = self.matrix_mult(beta_gamma, torch.ones_like(r))  #r portion of g(t)
@@ -163,15 +164,15 @@ class CLD(nn.Module):
         eigvals, eigvecs = torch.linalg.eigh(G)
 
         # Clamp eigenvalues to avoid instability
-        min_eigval = 1e-5
-        max_eigval = 1.25
+        min_eigval = 1e-6
+        max_eigval = 0.5
         eigvals_clamped = eigvals.clamp(min=min_eigval, max=max_eigval)
 
         # Reconstruct the clamped matrix
         G = eigvecs @ torch.diag_embed(eigvals_clamped) @ eigvecs.transpose(-1, -2)
 
         G_inv = torch.linalg.inv(G).to(torch.float32)
-
+        
         avg_eig = G.diagonal(offset=0, dim1=-2, dim2=-1).sum(-1) / G.shape[-1]  # shape: (32, 32)
         eye = torch.eye(self.image_channels, device=G.device).expand(32, 32, 3, 3)  # (32, 32, 3, 3)
         G_sqrt = torch.sqrt(avg_eig)[..., None, None] * eye      # (32, 32, 3, 3)
