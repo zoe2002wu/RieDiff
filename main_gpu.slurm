@@ -7,7 +7,7 @@
 #SBATCH -e output_%j.err       # Standard err goes to this file
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:nvidia_a100-sxm4-80gb:1
-#SBATCH --mem=50000
+#SBATCH --mem=100000
 
 # Activate your virtual environment (if you have one)
 source ~/.bashrc

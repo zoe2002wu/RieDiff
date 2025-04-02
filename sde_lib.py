@@ -21,16 +21,15 @@ class CLD(nn.Module):
         self.f = 2. / np.sqrt(config.m_inv)
         self.g = 1. / self.f
         self.gamma = config.gamma
-        self.numerical_eps = config.numerical_eps
-        self.riemann_mix = config.riemann_mix
         self.image_size = config.image_size
         self.image_channels = config.image_channels
         self.beta = config.beta0
         self.Gamma = config.Gamma
         self.geometry = config.geometry
+        self.numerical_eps = config.numerical_eps
+        self.M = 1/ config.m_inv
+        
 
-        # Load normalization once but allow updating
-        self.normalization = 1
 
 
 
@@ -59,14 +58,16 @@ class CLD(nn.Module):
         return torch.cat((drift_x, drift_r), dim=1), torch.cat((diffusion_x, diffusion_r), dim=1)
     
         
-    def sde_reverse(self, u, t, score_x= None):
+    def sde_reverse(self, u, t,  epsilon_x, score_r):
         '''
         Evaluating drift and diffusion of the SDE.
         '''
         if self.geometry == "Riemann":
             x, r = torch.chunk(u, 2, dim=1)
 
-            G, G_inv, G_sqrt = self.compute_G(score_x, t)
+            print(f"at t {t[0].item()} x has mean {x.mean().item()} var {x.var().item()}")
+
+            G, G_inv, G_sqrt = self.compute_G(t, epsilon_x, score_r)
 
             beta_coeff = self.beta * torch.sqrt(torch.tensor(self.m_inv))
             Gamma_coeff = self.Gamma * torch.sqrt(torch.tensor(self.m_inv))
@@ -110,9 +111,8 @@ class CLD(nn.Module):
 
             if self.geometry == "Riemann":
                 epsilon_x , score_r = torch.chunk(score, 2, dim=1)
-                score_x = self.compute_score_x(t, epsilon_x, score_r)
 
-                drift, diffusion = sde_fn(u, 1. - t, score_x)
+                drift, diffusion = sde_fn(u, 1. - t, epsilon_x, score_r)
 
             else: 
                 drift, diffusion = sde_fn(u, 1. - t)
@@ -149,35 +149,38 @@ class CLD(nn.Module):
 
         return score_x
 
-    def compute_G(self,score_x, t):
+    def compute_G(self, t, epsilon_x, score_r):
 
-        s_ = score_x.permute(0, 2, 3, 1)  # Shape: (batch_size, 32, 32, 3)
-        outer = s_.unsqueeze(-1) @ s_.unsqueeze(-2)  # Shape: (batch_size, 32, 32, 3, 3)
-        G = outer.mean(dim=0)  # Averaging over batch (reduces gradient strength)
-        
-        if t[0].item() == 1.0:
-            G_diagonal = torch.diagonal(G, dim1=-2, dim2=-1)
-            self.normalization = G_diagonal.mean().item()*self.m_inv 
+        score_xtx0 = self.compute_score_x(t, epsilon_x, score_r)
+        score_mean = score_xtx0.mean(dim=0, keepdim=True)  # shape: (1, d)
+        score_conditional = score_xtx0 - score_mean         # shape: (B, d)
+        score_conditional = score_conditional.permute(0, 2, 3, 1)  # Shape: (batch_size, 32, 32, 3)
 
-        G = G/self.normalization
+        G = score_conditional.unsqueeze(-1)@ score_conditional.unsqueeze(-2)
+        G = torch.mean(G, dim=0)         # shape: (d, d)
 
-        t = t[0].item()
-        k = 4.5 # tunes how quickly it goes to G_id
-        start = 1 / self.config.m_inv 
-        G_id  = start * torch.eye(self.image_channels, device=G.device).reshape(1,1,3,3).expand(self.image_size,self.image_size,self.image_channels,self.image_channels)
-        alpha = self.riemann_mix * torch.exp(torch.tensor(-k * (1-t), device = G.device))  
+        # Eigendecomposition
+        eigvals, eigvecs = torch.linalg.eigh(G)
 
-        G = alpha * G + (1 - alpha) * G_id
+        # Clamp eigenvalues to avoid instability
+        min_eigval = 1e-5
+        max_eigval = 1.25
+        eigvals_clamped = eigvals.clamp(min=min_eigval, max=max_eigval)
+
+        # Reconstruct the clamped matrix
+        G = eigvecs @ torch.diag_embed(eigvals_clamped) @ eigvecs.transpose(-1, -2)
 
         G_inv = torch.linalg.inv(G).to(torch.float32)
 
-        G_sqrt = torch.linalg.cholesky(G)
+        avg_eig = G.diagonal(offset=0, dim1=-2, dim2=-1).sum(-1) / G.shape[-1]  # shape: (32, 32)
+        eye = torch.eye(self.image_channels, device=G.device).expand(32, 32, 3, 3)  # (32, 32, 3, 3)
+        G_sqrt = torch.sqrt(avg_eig)[..., None, None] * eye      # (32, 32, 3, 3)
         G_sqrt = G_sqrt.to(torch.float32)
-        return G, G_inv, G_sqrt
+        return G, G_inv, G_sqrt # all of shape batch size x 32 x 32 x 3 x 3
     
 
     def matrix_mult(self,A, B):
-        # A is 32 x 32 x 3 x 3
+        # A is batch_size 32 x 32 x 3 x 3
         # B is batch-size x 3 x 32 x 32
         A = A.to(torch.float32)
         B = B.to(torch.float32)

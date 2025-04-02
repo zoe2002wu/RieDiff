@@ -69,16 +69,17 @@ def get_ode_sampler(config, sde, sampling_shape, eps):
                     var.append(x[0].var().item())
 
                     if t == 0:
-                        steps.append(x[0])
-                    if t >= 0.25 and first_bool == True:
-                        steps.append(x[0])
-                        first_bool = False
-                    if t >= 0.5 and second_bool == True:
-                        steps.append(x[0])
-                        second_bool = False
+                        steps.append(x[0].clone())
+                    
                     if t >= 0.75 and third_bool == True:
-                        steps.append(x[0])
+                        steps.append(x[0].clone())
                         third_bool = False
+                    if t >= 0.5 and second_bool == True:
+                        steps.append(x[0].clone())
+                        second_bool = False
+                    if t >= 0.25 and first_bool == True:
+                        steps.append(x[0].clone())
+                        first_bool = False
                 global nfe_counter
                 nfe_counter += 1
                 vec_t = torch.ones(

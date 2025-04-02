@@ -254,11 +254,9 @@ if __name__ == '__main__':
     p.add('--eval_loss_variance_images', type=int, default=1)
     p.add('--eval_sample_samples', type=int, default=1)
 
+    p.add('--geometry', choices = ['Riemann', 'Euclidean'])
     p.add('--eval_seed', type=int, default=0)
 
-    #TODO Add argument for riemann
-    p.add('--geometry', choices=['Euclidean', 'Riemann'], default='Riemann')
-    p.add('--riemann_mix', type=float, default = 0.5)
 
     config = p.parse_args()
     run_main(config)

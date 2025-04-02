@@ -41,14 +41,11 @@ def train(config, workdir):
     print(f"We are running training")
     sys.stdout.flush()
 
-
-
     local_rank = config.local_rank
     global_rank = config.global_rank
     global_size = config.global_size
 
     if config.mode == 'train':
-        print("set seeds", flush = True)
         set_seeds(global_rank, config.seed)
     elif config.mode == 'continue':
         set_seeds(global_rank, config.seed + config.cont_nbr)
@@ -57,8 +54,6 @@ def train(config, workdir):
 
     torch.cuda.device(local_rank)
     config.device = torch.device('cuda:%d' % local_rank)
-
-    print("cuda device", flush = True)
 
     # Setting up all necessary folders
     sample_dir = os.path.join(workdir, 'samples')
@@ -84,7 +79,6 @@ def train(config, workdir):
     if config.sde == 'vpsde':
         sde = sde_lib.VPSDE(config, beta_fn, beta_int_fn)
     elif config.sde == 'cld':
-        print("CLD", flush = True)
         sde = sde_lib.CLD(config, beta_fn, beta_int_fn)
     else:
         raise NotImplementedError('SDE %s is unknown.' % config.sde)
@@ -416,6 +410,7 @@ def evaluate(config, workdir):
     eval_sample = True
     eval_plots = True
 
+    # Plots
     if eval_plots:
         logging.info('sampling images and plots')
         dist.barrier()
@@ -433,21 +428,49 @@ def evaluate(config, workdir):
 
         save_img(samples, os.path.join(
                     samples_dir, 'sample.png'))
+        
+    # NFE
+    if eval_sample:
+        num_sampling_rounds = config.eval_sample_samples // (
+            config.sampling_batch_size * global_size) + 1
 
-    if eval_loss:
-        eval_loss = compute_eval_loss(
-            config, state, eval_step_fn, valid_queue, scaler, test=True)
-        if global_rank == 0:
-            logging.info('Testing loss: %.5f' % eval_loss.item())
+        for r in range(num_sampling_rounds):
+            if global_rank == 0:
+                logging.info('sampling -- round: %d' % r)
+            dist.barrier()
+
+            x, _, nfe = sampling_fn(score_model)
+            x = inverse_scaler(x)
+            samples = x.clamp(0.0, 1.0)
+
+            torch.save(samples, os.path.join(
+                samples_dir, 'samples_%d_%d.pth' % (r, global_rank)))
+            np.save(os.path.join(samples_dir, 'nfes_%d_%d.npy' %
+                    (r, global_rank)), np.array([nfe]))
+
         dist.barrier()
 
-    if eval_likelihood:
-        mean_bpd = compute_image_likelihood(
-            config, sde, state, likelihood_fn, scaler, inverse_scaler, valid_queue, test=True)
         if global_rank == 0:
-            logging.info('Mean NLL: %.5f' % mean_bpd.item())
-        dist.barrier()
+            all_samples = []
+            for sample_file in glob.glob(os.path.join(samples_dir, 'samples_*.pth')):
+                sample = torch.load(sample_file, map_location=config.device)
+                all_samples.append(sample)
 
+            all_samples = torch.cat(all_samples)
+            torch.save(all_samples, os.path.join(
+                samples_dir, 'all_samples.pth'))
+
+            all_nfes = []
+            for nfe_file in glob.glob(os.path.join(samples_dir, 'nfes_*.npy')):
+                nfe = np.load(nfe_file)
+                all_nfes.append(nfe)
+            all_nfes = np.concatenate(all_nfes, axis=0)
+
+            mean_nfe = np.mean(all_nfes)
+            logging.info('Mean NFE: %.3f' % mean_nfe)
+        dist.barrier()
+        
+    # FID
     if eval_fid:
         num_sampling_rounds = config.eval_fid_samples // (
             config.sampling_batch_size * global_size) + 1
@@ -510,42 +533,16 @@ def evaluate(config, workdir):
 
         dist.barrier()
 
-    if eval_sample:
-        num_sampling_rounds = config.eval_sample_samples // (
-            config.sampling_batch_size * global_size) + 1
-
-        for r in range(num_sampling_rounds):
-            if global_rank == 0:
-                logging.info('sampling -- round: %d' % r)
-            dist.barrier()
-
-            x, _, nfe = sampling_fn(score_model)
-            x = inverse_scaler(x)
-            samples = x.clamp(0.0, 1.0)
-
-            torch.save(samples, os.path.join(
-                samples_dir, 'samples_%d_%d.pth' % (r, global_rank)))
-            np.save(os.path.join(samples_dir, 'nfes_%d_%d.npy' %
-                    (r, global_rank)), np.array([nfe]))
-
+    if eval_loss:
+        eval_loss = compute_eval_loss(
+            config, state, eval_step_fn, valid_queue, scaler, test=True)
+        if global_rank == 0:
+            logging.info('Testing loss: %.5f' % eval_loss.item())
         dist.barrier()
 
+    if eval_likelihood:
+        mean_bpd = compute_image_likelihood(
+            config, sde, state, likelihood_fn, scaler, inverse_scaler, valid_queue, test=True)
         if global_rank == 0:
-            all_samples = []
-            for sample_file in glob.glob(os.path.join(samples_dir, 'samples_*.pth')):
-                sample = torch.load(sample_file, map_location=config.device)
-                all_samples.append(sample)
-
-            all_samples = torch.cat(all_samples)
-            torch.save(all_samples, os.path.join(
-                samples_dir, 'all_samples.pth'))
-
-            all_nfes = []
-            for nfe_file in glob.glob(os.path.join(samples_dir, 'nfes_*.npy')):
-                nfe = np.load(nfe_file)
-                all_nfes.append(nfe)
-            all_nfes = np.concatenate(all_nfes, axis=0)
-
-            mean_nfe = np.mean(all_nfes)
-            logging.info('Mean NFE: %.3f' % mean_nfe)
+            logging.info('Mean NLL: %.5f' % mean_bpd.item())
         dist.barrier()

@@ -13,13 +13,13 @@ def plot_mu_var(mu, var, dir):
     mu_values = np.linspace(-0.15, 0.15, 100)  # Mean around 0
     sigma2_values = np.linspace(0.2, 1.2, 100)  # Variance around 0.33
     MU, SIGMA2 = np.meshgrid(mu_values, sigma2_values)
-    Z = np.exp(-((MU - 0.03)**2 / (2 * 0.025**2) + (SIGMA2 - 0.5)**2 / (2 * 0.015**2)))
+    Z = np.exp(-((MU - 0)**2 / (2 * 0.025**2) + (SIGMA2 - 0.5)**2 / (2 * 0.015**2)))
 
     points = np.array([mu, var]).T.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
     # Create 2D histogram to get density
-    H, xedges, yedges = np.histogram2d(mu, var, bins=10)
+    H, xedges, yedges = np.histogram2d(mu, var, bins=20)
 
     # Function to get bin index
     def get_bin_value(x, y):
@@ -48,7 +48,7 @@ def plot_mu_var(mu, var, dir):
     plt.figure(figsize=(6, 6))
     plt.contour(MU, SIGMA2, Z, levels=15, cmap='rainbow')  # Contour plot
     plt.gca().add_collection(lc)
-    plt.colorbar(lc, label="Density")
+    # plt.colorbar(lc, label="Density")
 
     plt.xlabel(r'$\mu$')
     plt.ylabel(r'$\sigma^2$')
