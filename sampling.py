@@ -10,8 +10,7 @@ import gc
 from torchdiffeq import odeint
 from models.utils import get_score_fn
 import run_lib
-from util.utils import  get_data_inverse_scaler, save_img
-import os
+
 
 def get_sampling_fn(config, sde, sampling_shape, eps):
     sampler_name = config.sampling_method
@@ -69,37 +68,18 @@ def get_ode_sampler(config, sde, sampling_shape, eps):
                     mu.append(x[0].mean().item())
                     var.append(x[0].var().item())
 
-
-                    # samples_dir = '/content/CLD-SGM/work_dir/cifar10_seed_0/eval/cifar10/samples'
-                    # inverse_scaler = get_data_inverse_scaler(config)
-                    # def is_time_near(t, target, tol=1e-4):
-                    #     return (t - target).abs() < tol
-
-                    # if is_time_near(t, 0.):
-                    #     steps.append(x[0].clone())
-                    #     x_inv = inverse_scaler(x)
-                    #     save_img(x_inv, os.path.join(samples_dir, f'intermediate{t:.4f}.png'))
-
-                    # if third_bool and is_time_near(t, 0.25):
-                    #     u_clone = u.clone()
-                    #     x_clone, r_clone = torch.chunk(u_clone,2, dim=1)
-                    #     steps.append(x[0].clone())
-                    #     third_bool = False
-                    #     x_inv = inverse_scaler(x_clone)
-                    #     save_img(x_inv, os.path.join(samples_dir, f'intermediate{t:.4f}.png'))
-
-                    # if second_bool and is_time_near(t, 0.5):
-                    #     steps.append(x[0].clone())
-                    #     second_bool = False
-                    #     x_inv = inverse_scaler(x)
-                    #     save_img(x_inv, os.path.join(samples_dir, f'intermediate{t:.4f}.png'))
-
-                    # if first_bool and is_time_near(t, 0.75):
-                    #     steps.append(x[0].clone())
-                    #     first_bool = False
-                    #     x_inv = inverse_scaler(x)
-                    #     save_img(x_inv, os.path.join(samples_dir, f'intermediate{t:.4f}.png'))
-
+                    if t == 0:
+                        steps.append(x[0].clone())
+                    
+                    if t >= 0.75 and third_bool == True:
+                        steps.append(x[0].clone())
+                        third_bool = False
+                    if t >= 0.5 and second_bool == True:
+                        steps.append(x[0].clone())
+                        second_bool = False
+                    if t >= 0.25 and first_bool == True:
+                        steps.append(x[0].clone())
+                        first_bool = False
                 global nfe_counter
                 nfe_counter += 1
                 vec_t = torch.ones(

@@ -420,14 +420,16 @@ def evaluate(config, workdir):
         x = inverse_scaler(x)
         samples = x.clamp(0.0, 1.0)
 
+        save_img(samples, os.path.join(
+                    samples_dir, 'sample.png'))
         for i, step in enumerate(steps): 
             steps[i] = inverse_scaler(step).clamp(0.0, 1.0)
 
+        
         plots.plot_mu_var(mu, var, os.path.join(samples_dir, 'probability_landscape.png'))
         plots.plot_steps(steps, os.path.join(samples_dir, 'intermediary_images.png'))
 
-        save_img(samples, os.path.join(
-                    samples_dir, 'sample.png'))
+        
         
     # NFE
     if eval_sample:

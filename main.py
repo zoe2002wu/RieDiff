@@ -215,11 +215,11 @@ if __name__ == '__main__':
 
     # Sampling
     p.add('--sampling_method', choices=['ode', 'em', 'sscs'], default='ode')
-    p.add('--sampling_solver', default='rk4')
+    p.add('--sampling_solver', default='scipy_solver')
     p.add('--sampling_solver_options',
-          type=json.loads, default={'step_size': 0.005})
-    p.add('--sampling_rtol', type=float, default=1e-4)
-    p.add('--sampling_atol', type=float, default=1e-4)
+          type=json.loads, default={'solver': 'RK45'})
+    p.add('--sampling_rtol', type=float, default=1e-5)
+    p.add('--sampling_atol', type=float, default=1e-5)
     p.add('--sscs_num_stab', type=float, default=0.)
     p.add('--denoising', action='store_true')
     p.add('--n_discrete_steps', type=int)
