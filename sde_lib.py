@@ -70,9 +70,8 @@ class CLD(nn.Module):
             eigvals, _ = torch.linalg.eigh(G_sqrt)
             mean_eig = eigvals.mean()
  
-            print(f"at t {t[0].item():4f} x var {x.var().item():4f} | eigs of sqrt: min {eigvals.min().item():4f} mean {torch.sqrt(mean_eig):4f} max {eigvals.max().item():4f} | clamped by {scaled_by:4f} ")
 
-            beta_scaling = 2.4
+            beta_scaling = 2.35
             Gamma = 2 * G_sqrt
             beta = beta_scaling* G_sqrt # remember to add euclidean case later
 
@@ -88,6 +87,8 @@ class CLD(nn.Module):
 
             diffusion_x = torch.zeros_like(x) #x portion of g(t)
             diffusion_r = self.mm(beta_gamma, torch.ones_like(r))  #r portion of g(t)
+            
+            print(f"at t {t[0].item():4f} x var {x.var().item():4f} | eigs of sqrt: min {eigvals.min().item():4f} mean {torch.sqrt(mean_eig):4f} max {eigvals.max().item():4f} | clamped by {scaled_by:4f} | drift {drift_r.norm():4f} diffusion_r {diffusion_r.norm():4f} difference {diffusion_r.norm()-drift_r.norm():4f}")
 
             return torch.cat((drift_x, drift_r), dim=1), torch.cat((diffusion_x, diffusion_r), dim=1)
         else:
@@ -137,21 +138,6 @@ class CLD(nn.Module):
 
         return reverse_sde
 
-    def compute_score_x(self, t, epsilon_x, score_r):
-
-        noise_multiplier = self.noise_multiplier(t)
-        M_inv = self.m_inv
-        gamma = self.gamma
-
-        # Compute covariance components
-        ones = torch.ones_like(epsilon_x, device=epsilon_x.device)  # dimension 3
-        sigma_xx, sigma_xr, _ = self.var(t, 0. * ones, (gamma / M_inv) * ones)
-
-        epsilon_r = score_r/ noise_multiplier
-
-        score_x = (-epsilon_x / torch.sqrt(sigma_xx)) - noise_multiplier*sigma_xr*epsilon_r / sigma_xx
-
-        return score_x
 
     def compute_G(self, t, epsilon_x, score_r):
 
@@ -167,28 +153,44 @@ class CLD(nn.Module):
         eigvals, eigvecs = torch.linalg.eigh(G)
 
 
-        scaling_factor = 1.01  # allow 1% increase
+        scaling_factor = 1.005  # allow 1% increase
 
         # Make sure previous eigenvalues are safe and positive
 
         difference = 0
 
-        if eigvals.max().item()>self.prev_eig.max().item()*scaling_factor:
-            difference = eigvals.max().item()-self.prev_eig.max().item()
+        scaled_eigvals = torch.where(eigvals > self.prev_eig * scaling_factor,
+                              self.prev_eig * scaling_factor,
+                              eigvals)
+        
+        difference = eigvals - scaled_eigvals
 
-            eigvals = self.prev_eig * scaling_factor
 
-            G = eigvecs @ torch.diag_embed(eigvals) @ eigvecs.transpose(-1, -2)
+        G = eigvecs @ torch.diag_embed(scaled_eigvals) @ eigvecs.transpose(-1, -2)
 
-
-        self.prev_eig = eigvals
+        self.prev_eig = scaled_eigvals.detach()
 
         G_inv = torch.linalg.inv(G).to(torch.float32)
  
         G_sqrt = eigvecs @  torch.diag_embed(torch.sqrt(eigvals)) @ eigvecs.transpose(-1, -2)
  
-        return G, G_inv, G_sqrt, difference
-    
+        return G, G_inv, G_sqrt, difference.mean().item()
+
+    def compute_score_x(self, t, epsilon_x, score_r):
+
+        noise_multiplier = self.noise_multiplier(t)
+        M_inv = self.m_inv
+        gamma = self.gamma
+
+        # Compute covariance components
+        ones = torch.ones_like(epsilon_x, device=epsilon_x.device)  # dimension 3
+        sigma_xx, sigma_xr, _ = self.var(t, 0. * ones, (gamma / M_inv) * ones)
+
+        epsilon_r = score_r/ noise_multiplier
+
+        score_x = (-epsilon_x / torch.sqrt(sigma_xx)) - noise_multiplier*sigma_xr*epsilon_r / sigma_xx
+
+        return score_x
 
     def mm(self,A, B):
         # A is batch_size 32 x 32 x 3 x 3
