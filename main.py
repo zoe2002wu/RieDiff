@@ -111,6 +111,9 @@ def main(config):
 
 
 if __name__ == '__main__':
+
+
+
     p = configargparse.ArgParser()
     p.add('-cc', is_config_file=True)
     p.add('-sc', is_config_file=True)
@@ -215,9 +218,9 @@ if __name__ == '__main__':
 
     # Sampling
     p.add('--sampling_method', choices=['ode', 'em', 'sscs'], default='ode')
-    p.add('--sampling_solver', default='scipy_solver')
+    p.add('--sampling_solver', default='rk4')
     p.add('--sampling_solver_options',
-          type=json.loads, default={'solver': 'RK45'})
+          type=json.loads, default={})
     p.add('--sampling_rtol', type=float, default=1e-5)
     p.add('--sampling_atol', type=float, default=1e-5)
     p.add('--sscs_num_stab', type=float, default=0.)

@@ -11,6 +11,7 @@ from torchdiffeq import odeint
 from models.utils import get_score_fn
 import run_lib
 
+from scipy.integrate import LSODA
 
 def get_sampling_fn(config, sde, sampling_shape, eps):
     sampler_name = config.sampling_method
@@ -86,6 +87,39 @@ def get_ode_sampler(config, sde, sampling_shape, eps):
                     sampling_shape[0], device=u.device, dtype=torch.float64) * t
                 dudt = probability_flow_ode(model, u, vec_t)
                 return dudt
+
+
+            if config.sampling_solver in ['rk4', 'euler', 'midpoint', 'explicit_adams', 'implicit_adams']:
+                def linear_decreasing_step_grid_constructor(func, y0, t):
+                    dtype = t[0].dtype
+                    device = t.device
+
+                    n_steps =500
+
+                    linear = torch.linspace(t[0],t[1],n_steps, dtype=dtype, device=device) # goes from 0 to 1 in 200 steps
+                    grid = -torch.exp(-10*linear)
+                    grid = (grid - grid.min()) / (grid.max() - grid.min())
+
+                    # s0 = 0.1
+                    # s1 = 0.000001
+
+                    # # Linearly interpolate step sizes from s0 to s1
+                    # step_sizes = torch.linspace(s0, s1, steps=n_steps, dtype=dtype, device=device)
+
+                    # grid = torch.cumsum(step_sizes, dim=0)
+                    # grid = (grid-grid[0])/grid[-1]
+
+
+                    grid[0] = t[0]
+
+                    # Force final time to exactly match t[-1] in case of floating point drift
+                    grid[-1] = t[-1]
+
+                    return grid
+
+
+                config.sampling_solver_options['grid_constructor'] = linear_decreasing_step_grid_constructor
+
 
             global mu
             global var
