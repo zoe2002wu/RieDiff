@@ -72,19 +72,19 @@ class CLD(nn.Module):
  
             print(f"at t {t[0].item():4f} x var {x.var().item():4f} | eigs of sqrt: min {eigvals.min().item():4f} mean {torch.sqrt(mean_eig):4f} max {eigvals.max().item():4f} | clamped by {scaled_by:4f} ")
 
-            beta_scaling = 4
+            beta_scaling = 2.4
             Gamma = 2 * G_sqrt
-            beta_coeff = beta_scaling* G_sqrt # remember to add euclidean case later
+            beta = beta_scaling* G_sqrt # remember to add euclidean case later
 
-            beta_coeff = beta_coeff.to(torch.double)
+            beta = beta.to(torch.double)
             Gamma = Gamma.to(torch.double)
             hamilton_x_riemann = x 
             hamilton_r_riemann = self.mm(G_inv, r)
             
-            beta_gamma =  torch.sqrt( 2 * beta_scaling * 2) * G_sqrt
+            beta_gamma =  torch.sqrt( torch.tensor(2 * beta_scaling * 2)) * G_sqrt
 
-            drift_x = self.mm(beta_coeff , hamilton_r_riemann) #x portion of f(u, t)
-            drift_r = -self.mm(beta_coeff , hamilton_x_riemann) - self.mm(beta_coeff @ Gamma,  hamilton_r_riemann) #r portion of f(u, t)
+            drift_x = self.mm(beta , hamilton_r_riemann) #x portion of f(u, t)
+            drift_r = -self.mm(beta , hamilton_x_riemann) - self.mm(beta @ Gamma,  hamilton_r_riemann) #r portion of f(u, t)
 
             diffusion_x = torch.zeros_like(x) #x portion of g(t)
             diffusion_r = self.mm(beta_gamma, torch.ones_like(r))  #r portion of g(t)
@@ -170,7 +170,6 @@ class CLD(nn.Module):
         scaling_factor = 1.01  # allow 1% increase
 
         # Make sure previous eigenvalues are safe and positive
-        eps = 1e-5
 
         difference = 0
 
