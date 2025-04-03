@@ -28,7 +28,7 @@ class CLD(nn.Module):
         self.geometry = config.geometry
         self.numerical_eps = config.numerical_eps
         self.M = 1/ config.m_inv
-        self.prev_eig = 2
+        self.prev_eig = torch.tensor(100)
         
 
 
@@ -66,43 +66,22 @@ class CLD(nn.Module):
         if self.geometry == "Riemann":
             x, r = torch.chunk(u, 2, dim=1)
 
-
-            G, G_inv, G_sqrt,avg_eig, scaled_by = self.compute_G(t, epsilon_x, score_r)
-            eigvals, _ = torch.linalg.eigh(G)
+            G, G_inv, G_sqrt, scaled_by = self.compute_G(t, epsilon_x, score_r)
+            eigvals, _ = torch.linalg.eigh(G_sqrt)
             mean_eig = eigvals.mean()
  
+            print(f"at t {t[0].item():4f} x var {x.var().item():4f} | eigs of sqrt: min {eigvals.min().item():4f} mean {torch.sqrt(mean_eig):4f} max {eigvals.max().item():4f} | clamped by {scaled_by:4f} ")
 
-            print(f"at t {t[0].item():4f} x var {x.var().item():4f} eig avg {torch.sqrt(mean_eig):4f} max {eigvals.max().item():4f} clamped by {scaled_by:4f}")
-
-
-
-            ##TEST
-            # G = self.M*torch.eye(self.image_channels, device=G.device).expand(32, 32, 3, 3)  # (32, 32, 3, 3)
-
-            # G_inv = torch.linalg.inv(G).to(torch.float32)
-            
-            # avg_eig = G.diagonal(offset=0, dim1=-2, dim2=-1).sum(-1) / G.shape[-1]  # shape: (32, 32)
-            # eye = torch.eye(self.image_channels, device=G.device, dtype = torch.float64).expand(32, 32, 3, 3)  # (32, 32, 3, 3)
-            # G_sqrt = torch.sqrt(avg_eig)[..., None, None] * eye      # (32, 32, 3, 3)
-
-            # G_sqrt = G_sqrt.to(torch.float32)
-            ##
-
-            eye = torch.eye(3, device=x.device).expand(32, 32, 3, 3)  # ensure on correct device
+            beta_scaling = 4
             Gamma = 2 * G_sqrt
-            if self.geometry == "Euclidean":
-                beta_coeff = torch.tensor(8 * G_sqrt, device = x.device)
-            else:
-                #beta_scaling = 1
-                #beta_coeff =  beta_scaling * eye
-                beta_coeff = 3*torch.maximum(torch.tensor(0.6), torch.sqrt(mean_eig))*eye
+            beta_coeff = beta_scaling* G_sqrt # remember to add euclidean case later
 
             beta_coeff = beta_coeff.to(torch.double)
             Gamma = Gamma.to(torch.double)
             hamilton_x_riemann = x 
             hamilton_r_riemann = self.mm(G_inv, r)
             
-            beta_gamma = torch.sqrt((2 * beta_coeff @ Gamma).clone().detach())
+            beta_gamma =  torch.sqrt( 2 * beta_scaling * 2) * G_sqrt
 
             drift_x = self.mm(beta_coeff , hamilton_r_riemann) #x portion of f(u, t)
             drift_r = -self.mm(beta_coeff , hamilton_x_riemann) - self.mm(beta_coeff @ Gamma,  hamilton_r_riemann) #r portion of f(u, t)
@@ -184,31 +163,32 @@ class CLD(nn.Module):
         G = score_conditional.unsqueeze(-1)@ score_conditional.unsqueeze(-2)
         G = torch.mean(G, dim=0)         # shape: (d, d)
 
-        eigvals, eigvecs = torch.linalg.eigh(G)
-        max_eigval = eigvals.max().item()
-        if max_eigval>self.prev_eig*1.5:
-            eigvals = eigvals.clamp(max= self.prev_eig )
-            G = eigvecs @ torch.diag_embed(eigvals) @ eigvecs.transpose(-1, -2)
-        
-        scaled_by =  max_eigval- eigvals.max().item() 
-        
-        self.prev_eig = eigvals.max().item()
-                
 
-        mean_eig = eigvals.mean().item()
-        if mean_eig < 0.8:
-            scale = torch.clamp(torch.tensor(1.0 - mean_eig / 1.0, device=t.device), min=0.0, max=0.3)
-            I = torch.eye(G.shape[-1], device=G.device).expand_as(G)
-            G = (1 - scale) * G + scale * I
+        eigvals, eigvecs = torch.linalg.eigh(G)
+
+
+        scaling_factor = 1.01  # allow 1% increase
+
+        # Make sure previous eigenvalues are safe and positive
+        eps = 1e-5
+
+        difference = 0
+
+        if eigvals.max().item()>self.prev_eig.max().item()*scaling_factor:
+            difference = eigvals.max().item()-self.prev_eig.max().item()
+
+            eigvals = self.prev_eig * scaling_factor
+
+            G = eigvecs @ torch.diag_embed(eigvals) @ eigvecs.transpose(-1, -2)
+
+
+        self.prev_eig = eigvals
 
         G_inv = torch.linalg.inv(G).to(torch.float32)
-        
-        avg_eig = G.diagonal(offset=0, dim1=-2, dim2=-1).sum(-1) / G.shape[-1]  # shape: (32, 32)
-        eye = torch.eye(self.image_channels, device=G.device, dtype = torch.float64).expand(32, 32, 3, 3)  # (32, 32, 3, 3)
-        G_sqrt = torch.sqrt(avg_eig)[..., None, None] * eye      # (32, 32, 3, 3)
-
-        G_sqrt = G_sqrt.to(torch.float32)
-        return G, G_inv, G_sqrt, avg_eig[..., None, None]*eye, scaled_by # all of shape batch size x 32 x 32 x 3 x 3
+ 
+        G_sqrt = eigvecs @  torch.diag_embed(torch.sqrt(eigvals)) @ eigvecs.transpose(-1, -2)
+ 
+        return G, G_inv, G_sqrt, difference
     
 
     def mm(self,A, B):

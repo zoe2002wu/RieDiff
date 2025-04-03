@@ -94,12 +94,12 @@ def get_ode_sampler(config, sde, sampling_shape, eps):
                     dtype = t[0].dtype
                     device = t.device
 
-                    n_steps =500
+                    n_steps =200
 
                     linear = torch.linspace(t[0],t[1],n_steps, dtype=dtype, device=device) # goes from 0 to 1 in 200 steps
                     grid = -torch.exp(-10*linear)
                     grid = (grid - grid.min()) / (grid.max() - grid.min())
-
+                    grid = grid * (t[1] - 1e-3)
                     # s0 = 0.1
                     # s1 = 0.000001
 

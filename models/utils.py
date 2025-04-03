@@ -67,20 +67,7 @@ def get_score_fn(config, sde, model, train=False):
                 var_rr = (sde.var(t, 0. * ones, (sde.gamma / sde.m_inv) * ones)[2]).type(torch.float32)
 
                 score_r = - r / var_rr + out_r * noise_multiplier
-                if torch.isnan(out_r).any():
-                    print("out r contains Nans")
-                if torch.isnan(out_x).any():
-                    print("out_x contains NaNs")
-                    print("Input ranges:", 
-                        f"u min/max: {u.min()}/{u.max()}", 
-                        f"t min/max: {t.min()}/{t.max()}")
-                    for name, param in model.named_parameters():
-                        if param.grad is not None:
-                            print(f"{name} grad stats: "
-                                f"mean={param.grad.mean().item()}, "
-                                f"std={param.grad.std().item()}, "
-                                f"min={param.grad.min().item()}, "
-                                f"max={param.grad.max().item()}")
+              
                 epsilon_x = x+out_x*noise_multiplier
 
                 score = torch.cat((epsilon_x, score_r), dim=1)
