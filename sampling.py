@@ -97,9 +97,9 @@ def get_ode_sampler(config, sde, sampling_shape, eps):
                     n_steps =200
 
                     linear = torch.linspace(t[0],t[1],n_steps, dtype=dtype, device=device) # goes from 0 to 1 in 200 steps
-                    grid = -torch.exp(-10*linear)
+                    grid = -torch.exp(-40*linear)
                     grid = (grid - grid.min()) / (grid.max() - grid.min())
-                    grid = grid * (t[1] - 1e-3)
+                    grid = grid*(1-1e-3)
                     # s0 = 0.1
                     # s1 = 0.000001
 
@@ -125,6 +125,9 @@ def get_ode_sampler(config, sde, sampling_shape, eps):
             global var
             global steps
             global first_bool, second_bool, third_bool
+
+            global step
+            step = 0
 
             mu = []
             var = []

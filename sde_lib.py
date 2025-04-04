@@ -10,6 +10,7 @@ import torch.nn as nn
 import numpy as np
 from util.utils import add_dimensions
 import os
+import sampling
 
 class CLD(nn.Module):
     def __init__(self, config, beta_fn, beta_int_fn):
@@ -87,8 +88,11 @@ class CLD(nn.Module):
 
             diffusion_x = torch.zeros_like(x) #x portion of g(t)
             diffusion_r = self.mm(beta_gamma, torch.ones_like(r))  #r portion of g(t)
+
             
-            print(f"at t {t[0].item():4f} x var {x.var().item():4f} | eigs of sqrt: min {eigvals.min().item():4f} mean {torch.sqrt(mean_eig):4f} max {eigvals.max().item():4f} | clamped by {scaled_by:4f} | drift {drift_r.norm():4f} diffusion_r {diffusion_r.norm():4f} difference {diffusion_r.norm()-drift_r.norm():4f}")
+            print(f"at step {sampling.step} t {t[0].item():4f} x var {x.var().item():4f} | clamped by {scaled_by:4f} | eigs of sqrt: min {eigvals.min().item():4f} mean {torch.sqrt(mean_eig):4f} max {eigvals.max().item():4f} | drift {drift_r.norm():4f} diffusion_r {diffusion_r.norm():4f} difference {diffusion_r.norm()-drift_r.norm():4f}")
+
+            sampling.step+=1
 
             return torch.cat((drift_x, drift_r), dim=1), torch.cat((diffusion_x, diffusion_r), dim=1)
         else:
@@ -153,14 +157,15 @@ class CLD(nn.Module):
         eigvals, eigvecs = torch.linalg.eigh(G)
 
 
-        scaling_factor = 1.005  # allow 1% increase
+        scaling_factor = 1.03  # allow 1% increase
 
         # Make sure previous eigenvalues are safe and positive
 
         difference = 0
 
+
         scaled_eigvals = torch.where(eigvals > self.prev_eig * scaling_factor,
-                              self.prev_eig * scaling_factor,
+                              self.prev_eig * scaling_factor ,
                               eigvals)
         
         difference = eigvals - scaled_eigvals
@@ -172,7 +177,7 @@ class CLD(nn.Module):
 
         G_inv = torch.linalg.inv(G).to(torch.float32)
  
-        G_sqrt = eigvecs @  torch.diag_embed(torch.sqrt(eigvals)) @ eigvecs.transpose(-1, -2)
+        G_sqrt = eigvecs @  torch.diag_embed(torch.sqrt(scaled_eigvals)) @ eigvecs.transpose(-1, -2)
  
         return G, G_inv, G_sqrt, difference.mean().item()
 
